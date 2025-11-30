@@ -1,0 +1,22 @@
+{
+  "interactions": [
+    {
+      "sender": "A",
+      "receiver": "B",
+      "length_scale": 10.0,
+      "name": "A_to_B"
+    },
+    {
+      "sender": "C",
+      "receiver": "A",
+      "length_scale": 20.0,
+      "name": "C_to_A"
+    }
+  ],
+  "n_batches": 3,
+  "batches": [
+    "batch_1",
+    "batch_2",
+    "batch_3"
+  ]
+}
