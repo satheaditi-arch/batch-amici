@@ -112,7 +112,7 @@ def main():
     REPLICATE_ID = "replicate_00"
     DATA_PATH = DATA_DIR / f"{REPLICATE_ID}.h5ad"
     
-    RUN_ID = f"ba_amici_{REPLICATE_ID}_v2"  # v2 to avoid overwriting
+    RUN_ID = f"ba_amici_{REPLICATE_ID}"
     
     # UPDATED CONFIG with lower lambda
     model_config = {
