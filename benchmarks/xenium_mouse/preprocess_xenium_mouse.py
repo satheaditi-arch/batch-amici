@@ -19,7 +19,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 # =========================================================
 
 def preprocess_rep(rep_name):
-    print(f"\n✅ Processing {rep_name}...")
+    print(f"\n Processing {rep_name}...")
 
     rep_dir = os.path.join(RAW_DIR, rep_name)
 
@@ -51,19 +51,19 @@ def preprocess_rep(rep_name):
     for xk, yk in possible_keys:
         if xk in cells.columns and yk in cells.columns:
             spatial = cells[[xk, yk]].values
-            print(f"   ✅ Found spatial coords in columns: {xk}, {yk}")
+            print(f"    Found spatial coords in columns: {xk}, {yk}")
             break
 
     if spatial is None:
-        print("❌ Available columns in cells.csv.gz:")
+        print(" Available columns in cells.csv.gz:")
         print(list(cells.columns))
-        raise ValueError("❌ Could not find spatial centroid columns in cells.csv.gz")
+        raise ValueError(" Could not find spatial centroid columns in cells.csv.gz")
 
     # -------------------------------
     # 3. Align metadata with expression
     # -------------------------------
     if len(spatial) != adata.n_obs:
-        print(f"❌ Mismatch: cells metadata = {len(spatial)}, expression = {adata.n_obs}")
+        print(f" Mismatch: cells metadata = {len(spatial)}, expression = {adata.n_obs}")
         raise ValueError("Cell metadata and expression cell counts do not match.")
 
     adata.obsm["spatial"] = spatial
@@ -80,7 +80,7 @@ def preprocess_rep(rep_name):
     out_path = os.path.join(OUT_DIR, f"xenium_{rep_name}_preprocessed.h5ad")
     adata.write(out_path)
 
-    print("   ✅ Saved to:", out_path)
+    print("    Saved to:", out_path)
 
 
 # =========================================================
@@ -92,4 +92,4 @@ if __name__ == "__main__":
     preprocess_rep("Rep2")
     preprocess_rep("Rep3")
 
-    print("\n✅ All Xenium replicates preprocessed successfully.")
+    print("\n All Xenium replicates preprocessed successfully.")
