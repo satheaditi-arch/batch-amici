@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pytorch_lightning.callbacks import Callback
 from einops import rearrange, reduce
 from scvi import REGISTRY_KEYS
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
@@ -11,6 +12,29 @@ from .adversarial import BatchDiscriminator
 from ._components import AttentionBlock, ResNetMLP
 from ._constants import NN_REGISTRY_KEYS
 
+class MaxEpochsSetter(Callback):
+    """
+    Sets max_epochs in the module at the start of training.
+    
+    This ensures the GRL alpha scheduling works correctly.
+    """
+    
+    def on_train_start(self, trainer, pl_module):
+        """Called when training starts."""
+        if hasattr(pl_module.module, 'max_epochs'):
+            pl_module.module.max_epochs = trainer.max_epochs
+            print(f"✓ Set module.max_epochs = {trainer.max_epochs}")
+        
+        if hasattr(pl_module.module, 'use_adversarial'):
+            if pl_module.module.use_adversarial:
+                print(f"✓ Adversarial training ENABLED")
+                print(f"  lambda_adv: {pl_module.module.lambda_adv}")
+                print(f"  Initial GRL alpha: {pl_module.module._get_grl_alpha()}")
+    
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Called at the end of each epoch."""
+        if hasattr(pl_module.module, 'on_train_epoch_end'):
+            pl_module.module.on_train_epoch_end()
 
 class AMICIModule(HookedRootModule, BaseModuleClass):
     def __init__(
@@ -23,6 +47,7 @@ class AMICIModule(HookedRootModule, BaseModuleClass):
         n_batches: int = 1,
         use_adversarial: bool = False,
         lambda_adv: float = 0.0,
+        lambda_pair: float = 1e-3,
         # ------------------------
 
         n_label_embed: int = 32,
@@ -66,7 +91,9 @@ class AMICIModule(HookedRootModule, BaseModuleClass):
         self.n_batches = n_batches
         self.use_adversarial = use_adversarial
         self.lambda_adv = torch.tensor(lambda_adv)
-
+        self.lambda_pair = lambda_pair
+        self.current_epoch = 0
+        self.max_epochs = 100
         self.register_buffer("ct_profiles", self.empirical_ct_means)
 
         # ------------------- Embeddings -------------------
@@ -107,9 +134,11 @@ class AMICIModule(HookedRootModule, BaseModuleClass):
 
         # ------------------- Adversarial Discriminator -------------------
         if self.use_adversarial:
+            from .adversarial import BatchDiscriminator
             self.discriminator = BatchDiscriminator(
-                num_genes=self.n_genes,
-                num_batches=self.n_batches,
+                num_genes=n_genes,
+                num_batches=n_batches,
+                hidden_dim=128
             )
 
         # ------------------- Output Head -------------------
@@ -226,20 +255,17 @@ class AMICIModule(HookedRootModule, BaseModuleClass):
         true_X = tensors[REGISTRY_KEYS.X_KEY]
         prediction = generative_outputs["prediction"]
 
-        # 1. Reconstruction loss
         reconstruction_loss = F.gaussian_nll_loss(
             prediction, true_X, var=torch.ones_like(prediction), reduction="none"
         ).sum(-1)
 
-        # 2. Attention entropy penalty
         attention_penalty = torch.zeros(true_X.shape[0], device=true_X.device)
         if self.attention_penalty_coef > 0.0:
             attention_patterns = generative_outputs["attention_patterns"]
             eps = torch.finfo(attention_patterns.dtype).eps
             attention_entropy_terms = (
-                -1
-                * attention_patterns
-                * torch.log(torch.clamp(attention_patterns, min=eps, max=1 - eps))
+                -1 * attention_patterns * 
+                torch.log(torch.clamp(attention_patterns, min=eps, max=1 - eps))
             )
             attention_penalty = reduce(
                 reduce(attention_entropy_terms, "b h k -> b h", "sum"),
@@ -247,33 +273,35 @@ class AMICIModule(HookedRootModule, BaseModuleClass):
                 "mean",
             )
 
-        # 3. Value L1 penalty
         value_l1_penalty = torch.zeros(true_X.shape[0], device=true_X.device)
 
-        # 4.  ADVERSARIAL LOSS
         adv_loss = torch.tensor(0.0, device=true_X.device)
-        if self.use_adversarial:
+        if self.use_adversarial and self.training:
             residuals = generative_outputs["residual"]
             batch_index = tensors[REGISTRY_KEYS.BATCH_KEY].squeeze().long()
-            batch_logits = self.discriminator(residuals, alpha=self.lambda_adv)
-            adv_loss = F.cross_entropy(batch_logits, batch_index)
+            
+            alpha = self._get_grl_alpha()
+            batch_logits = self.discriminator(residuals, alpha=alpha)
+            adv_loss = F.cross_entropy(batch_logits, batch_index, reduction='mean')
 
-        # 4.5  γ Batch-pair bias regularization
         gamma_reg = torch.tensor(0.0, device=true_X.device)
         if hasattr(self.attention_layer, "batch_pair_regularizer"):
             gamma_reg = self.attention_layer.batch_pair_regularizer()
 
-        # 5.  TOTAL LOSS
-        loss = torch.mean(
-            reconstruction_loss
-            + self.attention_penalty_coef * attention_penalty
-            + self.value_l1_penalty_coef * value_l1_penalty
-            + adv_loss
-            + 1e-3 * gamma_reg
+        total_loss = torch.mean(
+            reconstruction_loss +
+            self.attention_penalty_coef * attention_penalty +
+            self.value_l1_penalty_coef * value_l1_penalty
         )
+        
+        if self.use_adversarial and self.training:
+            total_loss = total_loss + self.lambda_adv * adv_loss
+        
+        if hasattr(self.attention_layer, "batch_pair_regularizer"):
+            total_loss = total_loss + 1e-3 * gamma_reg
 
         return LossOutput(
-            loss=loss,
+            loss=total_loss,
             reconstruction_loss=reconstruction_loss,
             kl_local={
                 "attention_penalty": self.attention_penalty_coef * attention_penalty,
@@ -283,7 +311,14 @@ class AMICIModule(HookedRootModule, BaseModuleClass):
             },
             extra_metrics={
                 "attention_penalty_coef": torch.tensor(self.attention_penalty_coef),
+                "lambda_adv": torch.tensor(self.lambda_adv),
+                "grl_alpha": torch.tensor(self._get_grl_alpha() if self.use_adversarial else 0.0),
                 "adv_loss_val": adv_loss.detach(),
                 "gamma_reg_val": gamma_reg.detach(),
             },
         )
+    def _get_grl_alpha(self):
+        if self.max_epochs == 0:
+            return 1.0
+        progress = min(1.0, (2.0 * self.current_epoch) / self.max_epochs)
+        return progress

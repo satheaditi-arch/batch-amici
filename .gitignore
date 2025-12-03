@@ -41,3 +41,50 @@ __pycache__/
 # IDEs
 /.idea/
 /.vscode/
+
+# --- DATA FILES (TO IGNORE GLOBALLY) ---
+*.csv
+*.tsv
+*.txt
+*.log
+*.h5
+*.h5ad
+*.hdf5
+*.loom
+*.mtx
+*.npz
+*.npy
+*.pkl
+*.rds
+*.rdata
+*.gz
+*.zip
+*.tar
+*.tgz
+*.bz2
+
+# --- MODEL CHECKPOINTS / WEIGHTS ---
+*.pt
+*.pth
+*.ckpt
+*.joblib
+*.sav
+
+# --- CACHE / TEMP ---
+__pycache__/
+*.pyc
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# --- ENVIRONMENTS ---
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# --- EDITOR / SYSTEM FILES ---
+.DS_Store
+Thumbs.db

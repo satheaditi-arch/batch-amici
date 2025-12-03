@@ -38,7 +38,8 @@ class AMICI(VAEMixin, WandbUnsupervisedTrainingMixin, BaseModelClass):
         adata: AnnData,
         # --- NEW ARGUMENTS ---
         use_adversarial: bool = False,
-        lambda_adv: float = 1.0,
+        lambda_adv: float = 0.05,
+        lambda_pair: float = 1e-3,
         # ---------------------
         **model_kwargs,
     ):
@@ -69,6 +70,7 @@ class AMICI(VAEMixin, WandbUnsupervisedTrainingMixin, BaseModelClass):
             n_batches=n_batches,
             use_adversarial=use_adversarial,
             lambda_adv=lambda_adv,
+            lambda_pair=lambda_pair,
             # -----------------------
             **model_kwargs,
         )
