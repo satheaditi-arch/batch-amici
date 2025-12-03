@@ -1,0 +1,11 @@
+# ignore raw + huge data
+data/
+*.zip
+*.tar.gz
+*.h5
+*.h5ad
+
+# OS / editor junk
+.DS_Store
+__pycache__/
+.ipynb_checkpoints/
