@@ -33,7 +33,7 @@ adata2.obs["batch"] = "Rep2"
 adata3.obs["batch"] = "Rep3"
 
 # =========================================================
-# ✅ CONCATENATE FIRST (This creates `adata`)
+#  CONCATENATE FIRST (This creates `adata`)
 # =========================================================
 
 adata = sc.concat(
@@ -45,22 +45,22 @@ adata = sc.concat(
 adata.obs_names_make_unique()
 
 # =========================================================
-# ✅ Xenium → Visium Spatial Fix (NOW `adata` EXISTS)
+#  Xenium → Visium Spatial Fix (NOW `adata` EXISTS)
 # =========================================================
 
 if "spatial" not in adata.obsm:
 
     if "X_spatial" in adata.obsm:
-        print("✅ Using Xenium obsm['X_spatial'] → mapping to obsm['spatial']")
+        print(" Using Xenium obsm['X_spatial'] → mapping to obsm['spatial']")
         adata.obsm["spatial"] = adata.obsm["X_spatial"]
 
     elif {"x_centroid", "y_centroid"}.issubset(adata.obs.columns):
-        print("✅ Using obs x/y centroids → mapping to obsm['spatial']")
+        print(" Using obs x/y centroids → mapping to obsm['spatial']")
         adata.obsm["spatial"] = adata.obs[["x_centroid", "y_centroid"]].values
 
     else:
         raise ValueError(
-            "❌ Could not find Xenium spatial coordinates. "
+            " Could not find Xenium spatial coordinates. "
             "Expected `obsm['X_spatial']` OR obs['x_centroid','y_centroid']"
         )
 
@@ -72,4 +72,4 @@ adata = build_joint_spatial_graph(adata, k=12)
 out_path = f"{OUT_DIR}\xenium_merged_graph.h5ad"
 adata.write(out_path)
 
-print("✅ Xenium merged graph saved to:", out_path)
+print(" Xenium merged graph saved to:", out_path)
