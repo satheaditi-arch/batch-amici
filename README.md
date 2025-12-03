@@ -11,6 +11,8 @@ Cross-attention-based cell-cell interaction inference from ST data.
 
 ## Installation
 
+
+## Run model comparison between model.pt baseline and model.pt ba amici
 You need to have Python 3.10 or newer installed on your system. If you don't have
 Python installed, we recommend installing [Mambaforge](https://github.com/conda-forge/miniforge#mambaforge).
 
