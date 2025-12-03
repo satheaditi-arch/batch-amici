@@ -1,10 +1,11 @@
 """
-BA-AMICI Training Script.
+BA-AMICI Training Script - FIXED VERSION
 
-Includes:
-- Proper max_epochs setting
-- Diagnostic logging
-- MaxEpochsSetter callback
+Key Settings:
+- use_batch_aware=True -> Uses BatchAwareCrossAttention
+- use_adversarial=True -> Adds adversarial batch discrimination loss
+
+This ensures proper batch-aware training.
 """
 
 import sys
@@ -30,98 +31,52 @@ class MaxEpochsSetter(Callback):
         if hasattr(pl_module.module, 'max_epochs'):
             pl_module.module.max_epochs = trainer.max_epochs
             print(f"\n{'='*60}")
-            print(f"ADVERSARIAL TRAINING DIAGNOSTICS")
+            print(f"BA-AMICI TRAINING DIAGNOSTICS")
             print(f"{'='*60}")
             print(f"✓ Set max_epochs = {trainer.max_epochs}")
             
+            if hasattr(pl_module.module, 'use_batch_aware'):
+                print(f"✓ Batch-aware attention: {pl_module.module.use_batch_aware}")
+            
             if hasattr(pl_module.module, 'use_adversarial'):
-                print(f"✓ Adversarial enabled: {pl_module.module.use_adversarial}")
+                print(f"✓ Adversarial training: {pl_module.module.use_adversarial}")
                 if pl_module.module.use_adversarial:
                     print(f"  lambda_adv: {pl_module.module.lambda_adv}")
-                    print(f"  lambda_pair: {pl_module.module.lambda_pair}")
                     print(f"  Initial GRL alpha: {pl_module.module._get_grl_alpha():.3f}")
-                    
-                    # Check discriminator exists
-                    if hasattr(pl_module.module, 'discriminator'):
-                        print(f"✓ Discriminator initialized")
-                    else:
-                        print(f"✗ WARNING: No discriminator found!")
             print(f"{'='*60}\n")
     
     def on_train_epoch_end(self, trainer, pl_module):
-        """Update epoch counter in module."""
         if hasattr(pl_module.module, 'on_train_epoch_end'):
             pl_module.module.on_train_epoch_end()
             
-            # Log every 10 epochs
-            if trainer.current_epoch % 10 == 0:
+            # Log every 20 epochs
+            if trainer.current_epoch % 20 == 0 and trainer.current_epoch > 0:
                 if hasattr(pl_module.module, 'use_adversarial') and pl_module.module.use_adversarial:
                     alpha = pl_module.module._get_grl_alpha()
                     print(f"Epoch {trainer.current_epoch}: GRL alpha = {alpha:.3f}")
-
-
-def setup_directories(base_dir: Path, run_id: str):
-    results_dir = base_dir / "results" / run_id
-    results_dir.mkdir(parents=True, exist_ok=True)
-    return results_dir
-
-
-def load_and_prepare_data(data_path: Path):
-    print(f"\n{'='*60}")
-    print(f"Loading data from: {data_path}")
-    print(f"{'='*60}")
-    
-    if not data_path.exists():
-        raise FileNotFoundError(f"Data file not found: {data_path}")
-    
-    adata = ad.read_h5ad(data_path)
-    
-    required_obs = ['cell_type', 'batch', 'split']
-    missing = [col for col in required_obs if col not in adata.obs.columns]
-    if missing:
-        raise ValueError(f"Missing required columns in adata.obs: {missing}")
-    
-    if 'spatial' not in adata.obsm:
-        if 'x_coord' in adata.obs and 'y_coord' in adata.obs:
-            coords = np.column_stack([
-                adata.obs['x_coord'].values,
-                adata.obs['y_coord'].values
-            ])
-            adata.obsm['spatial'] = coords
-        else:
-            raise ValueError("No spatial coordinates found")
-    
-    adata_train = adata[adata.obs['split'] == 'train'].copy()
-    adata_test = adata[adata.obs['split'] == 'test'].copy()
-    
-    print(f"\nDataset Summary:")
-    print(f"  Train cells: {adata_train.n_obs}")
-    print(f"  Test cells:  {adata_test.n_obs}")
-    print(f"  Genes:       {adata_train.n_vars}")
-    print(f"  Cell types:  {adata_train.obs['cell_type'].nunique()}")
-    print(f"  Batches:     {adata_train.obs['batch'].nunique()}")
-    
-    return adata_train, adata_test
 
 
 def main():
     SEED = 42
     pl.seed_everything(SEED, workers=True)
     
-    DATA_DIR = PROJECT_ROOT / "pbmc_data" / "ba_amici_benchmark"
-    REPLICATE_ID = "replicate_00"
-    DATA_PATH = DATA_DIR / f"{REPLICATE_ID}.h5ad"
+    # ==================== CONFIGURATION ====================
+    RUN_ID = "ba_amici_replicate_00"
     
-    RUN_ID = f"ba_amici_{REPLICATE_ID}"
+    DATA_PATH = PROJECT_ROOT / "pbmc_data" / "ba_amici_benchmark_v2" / "replicate_00.h5ad"
+    SAVE_DIR = SCRIPT_DIR / "results"
+    MODEL_PATH = SAVE_DIR / RUN_ID
     
-    # UPDATED CONFIG with lower lambda
+    # BA-AMICI CONFIG: Full batch awareness
     model_config = {
         "n_heads": 4,
-        "n_query_dim": 64,  
+        "n_query_dim": 64,
         "n_kv_dim": 64,
-        "use_adversarial": True,
-        "lambda_adv": 0.05,  # REDUCED from 1.0
-        "lambda_pair": 0.001,  # Added explicit gamma regularization
+        # KEY SETTINGS FOR BA-AMICI:
+        "use_batch_aware": True,   # Uses BatchAwareCrossAttention
+        "use_adversarial": True,   # Adversarial batch discrimination
+        "lambda_adv": 0.1,         # Adversarial loss weight
+        "lambda_pair": 0.001,      # Batch-pair bias regularization
         "value_l1_penalty_coef": 0.0,
     }
     
@@ -130,7 +85,7 @@ def main():
         "epochs": 100,
         "batch_size": 128,
         "early_stopping": True,
-        "patience": 10,
+        "patience": 15,  # More patience for adversarial training
     }
     
     penalty_schedule = {
@@ -141,18 +96,34 @@ def main():
         "flavor": "linear"
     }
     
-    results_dir = setup_directories(SCRIPT_DIR, RUN_ID)
+    # ==================== LOAD DATA ====================
     print(f"\n{'='*60}")
-    print(f"BA-AMICI Training (FIXED VERSION)")
-    print(f"Results will be saved to: {results_dir}")
+    print("BA-AMICI Training (BATCH-AWARE + ADVERSARIAL)")
     print(f"{'='*60}")
     
-    adata_train, adata_test = load_and_prepare_data(DATA_PATH)
+    print(f"\nLoading data from {DATA_PATH}...")
+    adata = ad.read_h5ad(DATA_PATH)
     
-    print(f"\n{'='*60}")
-    print("Setting up AMICI for training data...")
-    print(f"{'='*60}")
+    # Fix spatial coordinates
+    if "spatial" not in adata.obsm:
+        if "x_coord" in adata.obs and "y_coord" in adata.obs:
+            adata.obsm["spatial"] = np.column_stack([
+                adata.obs["x_coord"].values,
+                adata.obs["y_coord"].values
+            ])
     
+    # Split data
+    adata_train = adata[adata.obs["split"] == "train"].copy()
+    adata_test = adata[adata.obs["split"] == "test"].copy()
+    
+    print(f"Train: {adata_train.n_obs} cells")
+    print(f"Test:  {adata_test.n_obs} cells")
+    print(f"Genes: {adata_train.n_vars}")
+    print(f"Cell types: {adata_train.obs['cell_type'].nunique()}")
+    print(f"Batches: {adata_train.obs['batch'].nunique()}")
+    
+    # ==================== SETUP & TRAIN ====================
+    print("\nSetting up AnnData...")
     AMICI.setup_anndata(
         adata_train,
         labels_key="cell_type",
@@ -161,15 +132,18 @@ def main():
         n_neighbors=30
     )
     
-    print("\nInitializing BA-AMICI model...")
-    print(f"Configuration:")
+    print("\nInitializing BA-AMICI model (BatchAwareCrossAttention + Adversarial)...")
+    print("Configuration:")
     for k, v in model_config.items():
         print(f"  {k}: {v}")
     
     model = AMICI(adata_train, **model_config)
     
+    # Create output directory
+    MODEL_PATH.mkdir(parents=True, exist_ok=True)
+    
     print(f"\n{'='*60}")
-    print(f"Starting Training (Epochs: {training_config['epochs']})")
+    print(f"Training for {training_config['epochs']} epochs...")
     print(f"{'='*60}\n")
     
     model.train(
@@ -180,29 +154,22 @@ def main():
         check_val_every_n_epoch=1,
         use_wandb=False,
         callbacks=[
-            MaxEpochsSetter(),  # ADDED: Ensures max_epochs is set
+            MaxEpochsSetter(),
             AttentionPenaltyMonitor(**penalty_schedule)
         ],
         enable_model_summary=True,
         enable_progress_bar=True,
     )
     
+    # ==================== SAVE ====================
+    print(f"\nSaving model to {MODEL_PATH}...")
+    model.save(str(MODEL_PATH), overwrite=True)
+    
+    # ==================== EVALUATE ====================
     print(f"\n{'='*60}")
-    print(f"Saving model to: {results_dir}")
+    print("Evaluating on test set...")
     print(f"{'='*60}")
     
-    model.save(str(results_dir), overwrite=True)
-    
-    model_file = results_dir / "model.pt"
-    if model_file.exists():
-        print(f"✓ Model saved successfully ({model_file.stat().st_size / 1024:.1f} KB)")
-    else:
-        print("✗ WARNING: Model file not found after save!")
-    
-    print(f"\n{'='*60}")
-    print("Evaluating on Test Set")
-    print(f"{'='*60}")
-
     AMICI.setup_anndata(
         adata_test,
         labels_key="cell_type",
@@ -210,35 +177,28 @@ def main():
         coord_obsm_key="spatial",
         n_neighbors=30
     )
-
+    
     test_metrics = model.get_reconstruction_error(
         adata_test,
         batch_size=training_config["batch_size"]
     )
-
-    print(f"\nTest Metrics:")
-    print(f"  Reconstruction Loss: {test_metrics['reconstruction_loss']:.4f}")
-
-    print("\nExtracting batch-corrected embeddings...")
+    print(f"Test reconstruction loss: {test_metrics['reconstruction_loss']:.4f}")
+    
+    # Extract and save embeddings
+    print("\nExtracting embeddings for evaluation...")
     try:
-        corrected_embeddings = model.get_nn_embed(
-            adata_test, 
-            batch_size=training_config["batch_size"]
-        )
-        
-        embedding_path = results_dir / "test_embeddings.npy"
-        np.save(embedding_path, corrected_embeddings)
-        print(f"✓ Embeddings saved to {embedding_path}")
-        print(f"  Shape: {corrected_embeddings.shape}")
-        
+        embeddings = model.get_predictions(adata_test, get_residuals=True, batch_size=128)
+        embedding_path = MODEL_PATH / "test_embeddings.npy"
+        np.save(embedding_path, embeddings)
+        print(f"✓ Embeddings saved: {embedding_path}")
     except Exception as e:
-        print(f"Could not extract embeddings: {e}")
-        corrected_embeddings = None
-        
+        print(f"Could not save embeddings: {e}")
+    
     print(f"\n{'='*60}")
-    print("Training Complete!")
+    print("BA-AMICI TRAINING COMPLETE")
+    print(f"Model saved to: {MODEL_PATH}")
     print(f"{'='*60}")
-    print(f"Model:      {results_dir / 'model.pt'}")
+
 
 if __name__ == "__main__":
     main()

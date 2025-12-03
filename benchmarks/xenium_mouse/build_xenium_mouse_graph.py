@@ -64,17 +64,12 @@ if "spatial" not in adata.obsm:
             "Expected `obsm['X_spatial']` OR obs['x_centroid','y_centroid']"
         )
 
-# =========================================================
-# ✅ Build Joint Spatial Graph
-# =========================================================
+
 
 adata = build_joint_spatial_graph(adata, k=12)
 
-# =========================================================
-# ✅ Save Output
-# =========================================================
 
-out_path = f"{OUT_DIR}/xenium_merged_graph.h5ad"
+out_path = f"{OUT_DIR}\xenium_merged_graph.h5ad"
 adata.write(out_path)
 
 print("✅ Xenium merged graph saved to:", out_path)
