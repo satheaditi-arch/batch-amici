@@ -126,13 +126,12 @@ ba-amici/
 │   └── adversarial.py         # GRL and BatchDiscriminator
 ├── benchmarks/
     ├── ba_amici_benchmark/
-    │   ├── ba_amici_benchmark_pipeline.py
-    │   ├── data_generation/
-    │   │   └── semisynthetic_batch_generator.py
-    │   └── evaluation/
-    │       └── interaction_consistency_evaluator.py
-    └── pbmc_data/
-        └── semisynthetic_data_gen_v2.py
+        ├── ba_amici_benchmark_pipeline.py
+        ├── data_generation/
+        │   └── semisynthetic_batch_generator.py
+        └── evaluation/
+            └── interaction_consistency_evaluator.py
+    
 ```
 
 ## Benchmarking
