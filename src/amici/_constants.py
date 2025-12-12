@@ -7,6 +7,7 @@ class _NN_REGISTRY_KEYS_NT(NamedTuple):
     NN_DIST_KEY: str = "nn_dist"
     NN_X_KEY: str = "nn_x"
     NN_LABELS_KEY: str = "nn_labels"
+    NN_BATCH_KEY: str = "nn_batch"
     NUM_NEIGHBORS_KEY: str = "n_neighbors"
 
 

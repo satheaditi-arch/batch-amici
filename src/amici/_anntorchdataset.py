@@ -22,7 +22,7 @@ from scvi.data import AnnTorchDataset
 from ._constants import NN_REGISTRY_KEYS
 
 if TYPE_CHECKING:
-    from ._manager import AnnDataManager
+    from scvi.data import AnnDataManager 
 
 
 def _registry_key_to_default_dtype(key: str) -> type:
