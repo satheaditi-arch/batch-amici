@@ -1,71 +1,245 @@
-# AMICI: Attention Mechanism Interpretation of Cell-cell Interactions
+# BA-AMICI: Batch-Aware Attention Mechanism Interpretation of Cell-cell Interactions
 
-[![CC BY-NC-ND 4.0][cc-by-nc-nd-shield]][cc-by-nc-nd]
+Batch-robust cell-cell interaction inference from spatial transcriptomics data.
 
-[cc-by-nc-nd]: https://creativecommons.org/licenses/by-nc-nd/4.0/
-[cc-by-nc-nd-shield]: https://img.shields.io/badge/License-CC%20BY--NC--ND%204.0-lightgrey.svg
+## Overview
 
-Cross-attention-based cell-cell interaction inference from ST data.
+BA-AMICI extends the [AMICI framework](https://github.com/azizilab/amici) to handle batch effects across tissue replicates and experimental conditions. It introduces two key mechanisms:
 
-<img width="839" height="366" alt="amici_framework" src="https://github.com/user-attachments/assets/13b05cb1-d59a-4ef1-8abe-858c8414448e" />
+1. **Batch-Conditioned Cross-Attention:** Learnable batch embeddings integrated into Q, K, V projections
+2. **Adversarial Regularization:** Gradient reversal layer enforcing batch-invariant gene expression residuals
 
 ## Installation
 
+You need to have Python 3.10 or newer installed on your system.
 
-## Run model comparison between model.pt baseline and model.pt ba amici
-You need to have Python 3.10 or newer installed on your system. If you don't have
-Python installed, we recommend installing [Mambaforge](https://github.com/conda-forge/miniforge#mambaforge).
-
-1) Install the latest release of `amici-st` from `PyPI <https://pypi.org/project/amici-st/>`_:
+1) Clone the repository and install dependencies:
 
 ```bash
-pip install amici-st
+git clone https://github.com/[your-repo]/ba-amici.git
+cd ba-amici
+pip install -e .
 ```
 
-Or install the latest development version via the following command:
+Or install with uv:
 
 ```bash
-pip install git+https://github.com/azizilab/amici.git@main
+uv pip install -e .
 ```
 
-2) Import `amici`
+2) Required dependencies:
+
+```
+torch>=2.0
+scvi-tools>=1.0
+scanpy>=1.9
+anndata>=0.9
+pytorch-lightning>=2.0
+numpy
+pandas
+```
+
+## Quick Start
 
 ```python
 import anndata
 from amici import AMICI
 
-adata = anndata.read_h5ad("./adata.h5ad")
-AMICI.setup_anndata(adata, labels_key="cell_type", coord_obsm_key="spatial")
-model = AMICI(adata, **model_params)
-model.train()
+# Load spatial transcriptomics data with batch information
+adata = anndata.read_h5ad("./spatial_data.h5ad")
+
+# Setup data with batch key
+AMICI.setup_anndata(
+    adata,
+    labels_key="cell_type",
+    batch_key="batch",           # Required for BA-AMICI
+    coord_obsm_key="spatial",
+    n_neighbors=50
+)
+
+# Create BA-AMICI model (batch-aware mode)
+model = AMICI(
+    adata,
+    use_batch_aware=True,        # Enable batch-conditioned attention
+    use_adversarial=True,        # Enable adversarial regularization
+    lambda_adv=0.1,              # Adversarial loss weight
+)
+
+# Train
+model.train(
+    max_epochs=100,
+    early_stopping=True,
+    early_stopping_patience=10
+)
+
+# Get attention patterns
+attention_patterns = model.get_attention_patterns()
 ```
 
-## Documentation
+## Key Parameters
 
-Find more detailed documentation on AMICI here: [AMICI documentation](https://amici-st.readthedocs.io/en/latest/).
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `use_batch_aware` | Enable batch-conditioned cross-attention | `False` |
+| `use_adversarial` | Enable adversarial batch regularization | `False` |
+| `lambda_adv` | Weight for adversarial loss | `0.1` |
+| `n_neighbors` | Number of spatial neighbors per cell | `50` |
+| `n_heads` | Number of attention heads | `4` |
+| `hidden_dim` | Hidden dimension for embeddings | `256` |
 
-To get started, check out our tutorial on basic usage of AMICI here: [Basic Usage Tutorial](examples/basic_usage.ipynb).
+## Model Architecture
 
-## Citation
+### Batch-Conditioned Attention
 
-If you find our work useful, please cite our preprint: https://www.biorxiv.org/content/10.1101/2025.09.22.677860v1
+Standard AMICI computes attention as:
+```
+Q = W_Q · h_recv
+K = W_K · h_send
+```
 
-_AMICI: Attention Mechanism Interpretation of Cell-cell Interactions_
+BA-AMICI adds batch conditioning:
+```
+Q = W_Q · h_recv + U_Q · E_batch_recv
+K = W_K · h_send + U_K · E_batch_send
+V = W_V · h_send + U_V · E_batch_send
+```
+
+Where `E_batch` is a learnable embedding for each batch.
+
+### Adversarial Regularization
+
+A discriminator attempts to predict batch from gene expression residuals:
+```
+D(Δ) → batch_prediction
+```
+
+The Gradient Reversal Layer (GRL) reverses gradients during backpropagation, training the encoder to produce batch-invariant residuals.
+
+## Project Structure
+
+```
+ba-amici/
+├── src/amici/
+│   ├── _model.py              # AMICI model class
+│   ├── _module.py             # PyTorch module with attention
+│   ├── batch_attention.py     # BatchAwareCrossAttention
+│   └── adversarial.py         # GRL and BatchDiscriminator
+├── benchmarks/
+    ├── ba_amici_benchmark/
+    │   ├── ba_amici_benchmark_pipeline.py
+    │   ├── data_generation/
+    │   │   └── semisynthetic_batch_generator.py
+    │   └── evaluation/
+    │       └── interaction_consistency_evaluator.py
+    └── pbmc_data/
+        └── semisynthetic_data_gen_v2.py
+```
+
+## Benchmarking
+
+### Semi-Synthetic Data Generation
+
+Generate benchmark data with known ground-truth interactions and batch effects:
+
+```python
+from benchmarks.data_generation import SemiBatchGenerator
+
+generator = SemiBatchGenerator(
+    source_adata=pbmc_adata,
+    n_batches=3,
+    n_replicates=10
+)
+
+# Generate replicates with batch effects
+generator.generate_all_replicates(
+    cells_per_replicate=20000,
+    library_size_std=0.5,
+    dropout_increase=0.15
+)
+```
+
+### Evaluation
+
+Compare BA-AMICI vs baseline AMICI on cross-replicate consistency:
+
+```python
+from benchmarks.evaluation import InteractionConsistencyEvaluator
+
+evaluator = InteractionConsistencyEvaluator()
+
+# Compute metrics
+results = evaluator.evaluate(
+    models={"baseline": baseline_model, "ba_amici": ba_amici_model},
+    replicates=replicate_adatas
+)
+
+print(f"Interaction Jaccard: {results['jaccard']}")
+print(f"Matrix Correlation: {results['correlation']}")
+```
+
+## Comparison: AMICI vs BA-AMICI
+
+| Feature | AMICI | BA-AMICI |
+|---------|-------|----------|
+| Single-batch data | ✓ | ✓ |
+| Multi-batch data | Limited | ✓ |
+| Batch embeddings | ✗ | ✓ |
+| Adversarial training | ✗ | ✓ |
+| Cross-replicate consistency | Variable | Improved |
+
+## Datasets
+
+BA-AMICI has been tested on:
+
+- **Semi-synthetic PBMC:** 68k PBMCs with simulated spatial coordinates and batch effects
+- **Mouse Brain Visium:** 10x Visium CytAssist with 3 tissue replicates
+- **Xenium Breast Cancer:** Two replicate slides (validation from original AMICI)
+
+## References
+
+This work builds upon:
 
 ```
 @article{Hong2025.09.22.677860,
     title = {AMICI: Attention Mechanism Interpretation of Cell-cell Interactions},
-    author = {Hong, Justin and Desai, Khushi and Nguyen, Tu Duyen and Nazaret, Achille and Levy, Nathan and Ergen, Can and Plitas, George and Azizi, Elham},
-    doi = {10.1101/2025.09.22.677860},
-	journal = {bioRxiv},
-	publisher = {Cold Spring Harbor Laboratory},
-	year = {2025},
+    author = {Hong, Justin and Desai, Khushi and Nguyen, Tu Duyen and Nazaret, Achille 
+              and Levy, Nathan and Ergen, Can and Plitas, George and Azizi, Elham},
+    journal = {bioRxiv},
+    year = {2025},
+    doi = {10.1101/2025.09.22.677860}
 }
 ```
 
-## Disclaimer
+Additional references:
+- Ganin & Lempitsky (2015). Unsupervised Domain Adaptation by Backpropagation. *ICML*.
+- Lopez et al. (2018). Deep generative modeling for single-cell transcriptomics. *Nature Methods*.
 
-This work is licensed under a
-[Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License][cc-by-nc-nd].
+## Troubleshooting
 
-Justin Hong, Khushi Desai, and Elham Azizi are inventors on a provisional patent application having U.S. Serial No. 63/884,704, filed on September 19, 2025, by The Trustees of Columbia University in the City of New York directed to the subject matter of the manuscript associated with this repository.
+### Common Issues
+
+**1. CUDA out of memory**
+```python
+# Reduce batch size
+model.train(batch_size=64)
+```
+
+**2. Neighbor batch indices not found**
+```python
+# Ensure batch_key is specified in setup
+AMICI.setup_anndata(adata, batch_key="batch", ...)
+```
+
+**3. Adversarial loss not decreasing**
+```python
+# Try adjusting lambda_adv
+model = AMICI(adata, use_adversarial=True, lambda_adv=0.05)
+```
+
+## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request.
+
+## Acknowledgments
+
+This project extends the AMICI framework developed by the Azizi Lab at Columbia University.
